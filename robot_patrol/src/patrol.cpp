@@ -10,24 +10,30 @@
 #include <functional>
 #include <memory>
 
+using namespace std::chrono_literals;
+
 class PatrolNode : public rclcpp::Node {
 public:
   PatrolNode()
       : Node{"patrol"},
-        twist_publisher_{
-            this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10)},
         scan_subscriber_{this->create_subscription<sensor_msgs::msg::LaserScan>(
             "/scan", 10,
-            std::bind(&PatrolNode::scan_cb, this, std::placeholders::_1))} {}
+            std::bind(&PatrolNode::scan_cb, this, std::placeholders::_1))},
+        twist_publisher_{
+            this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10)},
+        control_loop_timer_{this->create_wall_timer(
+            100ms, std::bind(&PatrolNode::control_loop_cb, this))} {}
 
 private:
   static constexpr double kPi{3.1416};
 
   void scan_cb(const sensor_msgs::msg::LaserScan::SharedPtr msg);
+  void control_loop_cb();
 
-  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_publisher_{};
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr
       scan_subscriber_{};
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_publisher_{};
+  rclcpp::TimerBase::SharedPtr control_loop_timer_{};
   double direction_{0};
 };
 
@@ -77,6 +83,15 @@ void PatrolNode::scan_cb(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
       found_one ? msg->angle_min + index_max * msg->angle_increment : 0;
   RCLCPP_DEBUG(this->get_logger(), "found_one=%d, direction_=%f", found_one,
                direction_);
+}
+
+void PatrolNode::control_loop_cb() {
+  geometry_msgs::msg::Twist twist{};
+  twist.linear.x = 0.1;
+  twist.angular.z = direction_ / 2;
+  RCLCPP_DEBUG(this->get_logger(),
+               "Publishing a twist message with angular.z=%f", twist.angular.z);
+  twist_publisher_->publish(twist);
 }
 
 int main(int argc, char **argv) {
