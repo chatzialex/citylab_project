@@ -1,4 +1,5 @@
 #include "geometry_msgs/msg/detail/twist__struct.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "rclcpp/executors.hpp"
 #include "rclcpp/logging.hpp"
@@ -6,8 +7,12 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/utilities.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "tf2/LinearMath/Quaternion.h"
+#include "tf2_ros/transform_broadcaster.h"
 #include <algorithm>
+#include <cmath>
 #include <functional>
+#include <iterator>
 #include <memory>
 
 using namespace std::chrono_literals;
@@ -20,13 +25,27 @@ public:
             "/scan", 10,
             std::bind(&PatrolNode::scan_cb, this, std::placeholders::_1))},
         twist_publisher_{
-            this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10)},
+            this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1)},
         control_loop_timer_{this->create_wall_timer(
-            100ms, std::bind(&PatrolNode::control_loop_cb, this))} {}
+            200ms, std::bind(&PatrolNode::control_loop_cb, this))},
+        tf_broadcaster_{
+            std::make_unique<tf2_ros::TransformBroadcaster>(*this)} {}
 
 private:
+  // math constants
   static constexpr double kPi{3.1416};
 
+  // settings
+  static constexpr double kAngleMin{-kPi / 2};
+  static constexpr double kAngleMax{kPi / 2};
+  static constexpr size_t kSlidingSize{50};
+
+  // helper functions
+  size_t angleToIndex(double angle);
+  bool valid(const sensor_msgs::msg::LaserScan::SharedPtr msg);
+  size_t findMaxPos(const sensor_msgs::msg::LaserScan::SharedPtr msg);
+
+  // callbacks
   void scan_cb(const sensor_msgs::msg::LaserScan::SharedPtr msg);
   void control_loop_cb();
 
@@ -35,62 +54,107 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_publisher_{};
   rclcpp::TimerBase::SharedPtr control_loop_timer_{};
   double direction_{0};
+  std::vector<std::optional<double>> sliding_min_;
+
+  std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 };
 
-void PatrolNode::scan_cb(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
-  RCLCPP_DEBUG(this->get_logger(), "Started scan_cb() callback.");
-
+bool PatrolNode::valid(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
   if (msg->angle_increment <= 0) {
     RCLCPP_WARN(this->get_logger(),
                 "Found unexpected value of angle_increment<=0 in the laser "
                 "scan message.");
-    return;
+    return false;
   }
-
-  if (msg->angle_min > -kPi / 2) {
+  if (msg->angle_min > kAngleMin) {
     RCLCPP_WARN(this->get_logger(),
                 "The angle of -pi/2 is outside of the laser scan range.");
-    return;
+    return false;
   }
-
-  if (msg->angle_min + msg->angle_increment * msg->ranges.size() < kPi / 2) {
+  if (msg->angle_min + msg->angle_increment * msg->ranges.size() < kAngleMax) {
     RCLCPP_WARN(this->get_logger(),
                 "The angle of pi/2 is outside of the laser scan range.");
-    return;
+    return false;
+  }
+  return true;
+}
+
+size_t
+PatrolNode::findMaxPos(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
+  const auto angleToIndex{[msg](double angle) {
+    return static_cast<size_t>(
+        std::ceil((angle - msg->angle_min) / msg->angle_increment));
+  }};
+  const auto isWithinRange{[msg](double range) {
+    return msg->range_min <= range && range <= msg->range_max;
+  }};
+
+  const auto i0{angleToIndex(kAngleMin)};
+  const auto i1{angleToIndex(kAngleMax)};
+
+  sliding_min_.resize(i1 - i0);
+  std::optional<double> min{};
+
+  for (size_t i{0}; i < sliding_min_.size(); ++i) {
+    min = std::nullopt;
+    for (size_t j{i0 + i - kSlidingSize}; j <= i0 + i + kSlidingSize; ++j) {
+      if (!isWithinRange(msg->ranges[j])) {
+        continue;
+      }
+      if (!min || (msg->ranges[j] < min)) {
+        min = msg->ranges[j];
+      }
+    }
+    sliding_min_[i] = min;
   }
 
-  const size_t index_start{
-      static_cast<size_t>((-kPi / 2 - msg->angle_min) / msg->angle_increment)};
-  const size_t index_end{
-      static_cast<size_t>((kPi / 2 - msg->angle_min) / msg->angle_increment)};
+  return std::distance(
+             sliding_min_.begin(),
+             std::max_element(sliding_min_.begin(), sliding_min_.end())) +
+         i0;
+}
 
-  RCLCPP_DEBUG(this->get_logger(), "index_start=%ld, index_end=%ld",
-               index_start, index_end);
+void PatrolNode::scan_cb(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
+  RCLCPP_DEBUG(this->get_logger(), "Started scan_cb() callback.");
 
-  size_t index_max{index_start};
-  bool found_one{false};
-  for (size_t i{index_start}; i < index_end; ++i) {
-    if (msg->ranges[i] < msg->range_min || msg->ranges[i] > msg->range_max) {
-      continue;
-    }
-    found_one = true;
-    if (msg->ranges[i] > msg->ranges[index_max]) {
-      index_max = i;
-    }
+  if (!valid(msg)) {
+    RCLCPP_WARN(this->get_logger(), "Message not valid, ignoring.");
   }
 
-  direction_ =
-      found_one ? msg->angle_min + index_max * msg->angle_increment : 0;
-  RCLCPP_DEBUG(this->get_logger(), "found_one=%d, direction_=%f", found_one,
-               direction_);
+  const auto max_pos{findMaxPos(msg)};
+
+  if (msg->ranges[max_pos]) {
+    direction_ = msg->angle_min + max_pos * msg->angle_increment;
+  }
+
+  RCLCPP_INFO(this->get_logger(), "max=%f at direction_=%f [deg]",
+              msg->ranges[max_pos], 180 * direction_ / kPi);
+
+  geometry_msgs::msg::TransformStamped t;
+
+  t.header.stamp = this->get_clock()->now();
+  t.header.frame_id = "base_link";
+  t.child_frame_id = "goal";
+  constexpr double length{1.0};
+  t.transform.translation.x = std::cos(direction_) * length;
+  t.transform.translation.y = std::sin(direction_) * length;
+  t.transform.translation.z = 0.0;
+
+  tf2::Quaternion q;
+  q.setRPY(0, 0, direction_);
+  t.transform.rotation.x = q.x();
+  t.transform.rotation.y = q.y();
+  t.transform.rotation.z = q.z();
+  t.transform.rotation.w = q.w();
+
+  // Send the transformation
+  tf_broadcaster_->sendTransform(t);
 }
 
 void PatrolNode::control_loop_cb() {
   geometry_msgs::msg::Twist twist{};
-  twist.linear.x = 0.1;
+  // twist.linear.x = 0.1;
   twist.angular.z = direction_ / 2;
-  RCLCPP_DEBUG(this->get_logger(),
-               "Publishing a twist message with angular.z=%f", twist.angular.z);
   twist_publisher_->publish(twist);
 }
 

@@ -7,6 +7,7 @@ def generate_launch_description():
             package="robot_patrol",
             executable="patrol",
             output="screen",
+            parameters = [{"use_sim_time" : True}],
             emulate_tty=True
         )
     ])
