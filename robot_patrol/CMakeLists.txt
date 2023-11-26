@@ -20,8 +20,6 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(tf2 REQUIRED)
-find_package(tf2_ros REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -35,7 +33,7 @@ if(BUILD_TESTING)
 endif()
 
 add_executable(patrol src/patrol.cpp)
-ament_target_dependencies(patrol rclcpp sensor_msgs geometry_msgs tf2 tf2_ros)
+ament_target_dependencies(patrol rclcpp sensor_msgs geometry_msgs)
 
 install(
 	TARGETS patrol
