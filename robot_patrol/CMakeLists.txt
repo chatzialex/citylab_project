@@ -20,6 +20,8 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -32,8 +34,17 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/GetDirection.srv"
+)
+
 add_executable(patrol src/patrol.cpp)
 ament_target_dependencies(patrol rclcpp sensor_msgs geometry_msgs)
+
+add_executable(direction_service src/direction_service.cpp)
+ament_target_dependencies(direction_service rclcpp)
+rosidl_target_interfaces(direction_service
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 install(
 	TARGETS patrol
