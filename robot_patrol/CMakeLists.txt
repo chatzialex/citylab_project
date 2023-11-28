@@ -41,6 +41,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 add_executable(patrol src/patrol.cpp)
 ament_target_dependencies(patrol rclcpp sensor_msgs geometry_msgs)
 
+add_executable(patrol_with_service src/patrol_with_service.cpp)
+ament_target_dependencies(patrol_with_service rclcpp sensor_msgs geometry_msgs)
+rosidl_target_interfaces(patrol_with_service
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+
 add_executable(direction_service src/direction_service.cpp)
 ament_target_dependencies(direction_service rclcpp)
 rosidl_target_interfaces(direction_service
@@ -52,8 +57,13 @@ rosidl_target_interfaces(test_service
   ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 install(
-	TARGETS patrol direction_service test_service
-	DESTINATION lib/${PROJECT_NAME}
+	TARGETS 
+		patrol 
+		patrol_with_service
+		direction_service
+		test_service
+	DESTINATION 
+		lib/${PROJECT_NAME}
 )
 
 install(
