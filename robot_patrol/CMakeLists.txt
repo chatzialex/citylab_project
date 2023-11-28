@@ -46,8 +46,13 @@ ament_target_dependencies(direction_service rclcpp)
 rosidl_target_interfaces(direction_service
   ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
+add_executable(test_service src/test_service.cpp)
+ament_target_dependencies(test_service rclcpp sensor_msgs)
+rosidl_target_interfaces(test_service
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+
 install(
-	TARGETS patrol
+	TARGETS patrol direction_service test_service
 	DESTINATION lib/${PROJECT_NAME}
 )
 
