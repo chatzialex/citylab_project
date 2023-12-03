@@ -41,6 +41,7 @@ endif()
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetDirection.srv"
   "action/GoToPose.action"
+  DEPENDENCIES std_msgs geometry_msgs sensor_msgs
 )
 
 add_executable(patrol src/patrol.cpp)
@@ -52,7 +53,7 @@ rosidl_target_interfaces(patrol_with_service
   ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 add_executable(direction_service src/direction_service.cpp)
-ament_target_dependencies(direction_service rclcpp)
+ament_target_dependencies(direction_service rclcpp sensor_msgs)
 rosidl_target_interfaces(direction_service
   ${PROJECT_NAME} "rosidl_typesupport_cpp")
 

@@ -62,8 +62,8 @@ void TestService::timer_cb() {
           "Client interrupted while waiting for service. Terminating...");
       return;
     }
-    RCLCPP_INFO(this->get_logger(),
-                "Service Unavailable. Waiting for Service...");
+    RCLCPP_INFO(this->get_logger(), "Service Unavailable.");
+    return;
   }
 
   auto request{std::make_shared<robot_patrol::srv::GetDirection::Request>()};
@@ -76,9 +76,10 @@ void TestService::timer_cb() {
 
 void TestService::response_callback(
     rclcpp::Client<robot_patrol::srv::GetDirection>::SharedFuture future) {
-  auto status{future.wait_for(1s)};
+  auto status{future.wait_for(kWaitTime)};
   if (status == std::future_status::ready) {
-    RCLCPP_INFO(this->get_logger(), "Result: %s", future.get()->direction);
+    RCLCPP_INFO(this->get_logger(), "Result: %s",
+                future.get()->direction.c_str());
     service_done_ = true;
   } else {
     RCLCPP_INFO(this->get_logger(), "Service In-Progress...");
@@ -88,12 +89,13 @@ void TestService::response_callback(
 void TestService::subscription_cb(
     const sensor_msgs::msg::LaserScan::SharedPtr msg) {
   msg_ = *msg;
+  sensor_data_available_ = true;
 }
 
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
 
-  std::shared_ptr<TestService> node{};
+  auto node{std::make_shared<TestService>()};
   while (!node->is_service_done()) {
     rclcpp::spin_some(node);
   }

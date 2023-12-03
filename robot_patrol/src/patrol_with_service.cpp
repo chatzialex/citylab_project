@@ -55,8 +55,8 @@ private:
   // settings
   static constexpr double kAngleMin{-kPi / 2};
   static constexpr double kAngleMax{kPi / 2};
-  std::chrono::nanoseconds kServiceTimeout{0ms};
-  std::chrono::nanoseconds kFutureTimeout{100ms};
+  std::chrono::nanoseconds kServiceTimeout{50ms};
+  std::chrono::nanoseconds kFutureTimeout{50ms};
 
   // helper functions
   bool valid(const sensor_msgs::msg::LaserScan::SharedPtr msg);
