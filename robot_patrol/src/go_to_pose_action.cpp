@@ -119,7 +119,7 @@ void GoToPose::execute(const std::shared_ptr<GoalHandleGoToPose> goal_handle) {
   geometry_msgs::msg::Twist twist{};
 
   rclcpp::Rate loop_rate(kLoopRate);
-
+  bool move{false};
   while (rclcpp::ok()) {
     const double dx{desired_pos_.x - current_pos_.x};
     const double dy{desired_pos_.y - current_pos_.y};
@@ -130,6 +130,9 @@ void GoToPose::execute(const std::shared_ptr<GoalHandleGoToPose> goal_handle) {
     const double dtheta{std::atan2(std::sin(theta_des - current_pos_.theta),
                                    std::cos(theta_des - current_pos_.theta))};
     const bool goal_theta_reached{std::abs(dtheta) <= kGoalThetaTol};
+    if (goal_theta_reached) {
+      move = true;
+    }
     const bool goal_reached{goal_pos_reached && goal_theta_reached};
 
     if (goal_handle->is_canceling()) {
@@ -152,7 +155,7 @@ void GoToPose::execute(const std::shared_ptr<GoalHandleGoToPose> goal_handle) {
       return;
     }
 
-    twist.linear.x = goal_pos_reached ? 0.0 : 0.2;
+    twist.linear.x = move && !goal_pos_reached ? 0.2 : 0.0;
     twist.angular.z = {dtheta / 2};
     publisher_->publish(twist);
 
