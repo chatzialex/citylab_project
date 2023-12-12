@@ -4,10 +4,13 @@
 #include "rclcpp/executors.hpp"
 #include "rclcpp/utilities.hpp"
 #include "robot_patrol/action/detail/go_to_pose__struct.hpp"
+#include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <functional>
 #include <geometry_msgs/msg/twist.hpp>
 #include <memory>
+#include <mutex>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/node.hpp>
 #include <rclcpp/publisher.hpp>
@@ -71,6 +74,11 @@ private:
 
   geometry_msgs::msg::Pose2D desired_pos_{};
   geometry_msgs::msg::Pose2D current_pos_{};
+
+  // thread synchronization for action preemption
+  std::atomic<bool> action_running_{false};
+  mutable std::mutex mutex_;
+  std::condition_variable cv_;
 };
 
 void GoToPose::subscription_cb(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -106,6 +114,14 @@ GoToPose::handle_cancel(const std::shared_ptr<GoalHandleGoToPose> goal_handle) {
 void GoToPose::handle_accepted(
     const std::shared_ptr<GoalHandleGoToPose> goal_handle) {
   using namespace std::placeholders;
+
+  if (action_running_.load() /* another action already running*/) {
+    action_running_.store(false); // preempt active action
+    // wait for active action to be preempted
+    std::unique_lock lock{mutex_};
+    cv_.wait(lock, [this] { return this->action_running_.load(); });
+  }
+
   // this needs to return quickly to avoid blocking the executor, so spin up
   // a new thread
   std::thread{std::bind(&GoToPose::execute, this, _1), goal_handle}.detach();
@@ -114,31 +130,52 @@ void GoToPose::handle_accepted(
 void GoToPose::execute(const std::shared_ptr<GoalHandleGoToPose> goal_handle) {
   RCLCPP_INFO(this->get_logger(), "Executing goal");
 
+  action_running_.store(true);
   auto feedback{std::make_shared<GoToPoseAction::Feedback>()};
   auto result{std::make_shared<GoToPoseAction::Result>()};
   geometry_msgs::msg::Twist twist{};
-
   rclcpp::Rate loop_rate(kLoopRate);
+
+  double dx{};
+  double dy{};
+  double ds{};
+  bool goal_pos_reached{};
+  double theta_des{};
+  double dtheta{};
+  bool goal_theta_reached{};
+  bool goal_reached{};
   bool move{false};
+
   while (rclcpp::ok()) {
-    const double dx{desired_pos_.x - current_pos_.x};
-    const double dy{desired_pos_.y - current_pos_.y};
-    const double ds{std::sqrt(std::pow(dx, 2) + std::pow(dy, 2))};
-    const bool goal_pos_reached{ds <= kGoalPosTol};
-    const double theta_des{goal_pos_reached ? desired_pos_.theta
-                                            : std::atan2(dy, dx)};
-    const double dtheta{std::atan2(std::sin(theta_des - current_pos_.theta),
-                                   std::cos(theta_des - current_pos_.theta))};
-    const bool goal_theta_reached{std::abs(dtheta) <= kGoalThetaTol};
+    dx = desired_pos_.x - current_pos_.x;
+    dy = desired_pos_.y - current_pos_.y;
+    ds = std::sqrt(std::pow(dx, 2) + std::pow(dy, 2));
+    goal_pos_reached = ds <= kGoalPosTol;
+    theta_des = goal_pos_reached ? desired_pos_.theta : std::atan2(dy, dx);
+    dtheta = std::atan2(std::sin(theta_des - current_pos_.theta),
+                        std::cos(theta_des - current_pos_.theta));
+    goal_theta_reached = std::abs(dtheta) <= kGoalThetaTol;
     if (goal_theta_reached) {
       move = true;
     }
-    const bool goal_reached{goal_pos_reached && goal_theta_reached};
+    goal_reached = goal_pos_reached && goal_theta_reached;
+
+    if (!action_running_.load() /* preempted by new goal */) {
+      result->status = false;
+      goal_handle->abort(result);
+      publisher_->publish(geometry_msgs::msg::Twist{});
+      RCLCPP_INFO(this->get_logger(), "Goal preempted by new goal.");
+      std::lock_guard<std::mutex> lock{mutex_};
+      action_running_ = true; // allow new goal
+      cv_.notify_one();
+      return;
+    }
 
     if (goal_handle->is_canceling()) {
       result->status = false;
-      publisher_->publish(geometry_msgs::msg::Twist{});
       goal_handle->canceled(result);
+      publisher_->publish(geometry_msgs::msg::Twist{});
+      action_running_.store(false);
       RCLCPP_INFO(this->get_logger(), "Goal canceled");
       return;
     }
@@ -149,8 +186,9 @@ void GoToPose::execute(const std::shared_ptr<GoalHandleGoToPose> goal_handle) {
 
     if (goal_reached) {
       result->status = true;
-      publisher_->publish(geometry_msgs::msg::Twist{});
       goal_handle->succeed(result);
+      publisher_->publish(geometry_msgs::msg::Twist{});
+      action_running_.store(false);
       RCLCPP_INFO(this->get_logger(), "Goal succeeded");
       return;
     }
