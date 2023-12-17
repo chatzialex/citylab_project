@@ -89,23 +89,20 @@ void DirectionService::service_cb(
   }
 
   std::cout << std::endl;
-  */
+
 
   std::cout << "sums:" << sums[0] << " " << sums[1] << " " << sums[2]
             << std::endl;
   std::cout << "max_sum:" << max_sum << std::endl;
-
+*/
   switch (max_sum) {
   case 0:
-    std::cout << "right" << std::endl;
     response->direction = "right";
     break;
   case 1:
-    std::cout << "front" << std::endl;
     response->direction = "front";
     break;
   case 2:
-    std::cout << "left" << std::endl;
     response->direction = "left";
   }
 }
